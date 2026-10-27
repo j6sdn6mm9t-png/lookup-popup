@@ -11,7 +11,11 @@ CONFIG := A_ScriptDir "\config.ini"
 DEFAULT_KEY := "XButton2"
 SERVER := "http://127.0.0.1:47213"
 POPUP := "LookUp Popup"
-PYTHONW := A_ScriptDir "\.venv\Scripts\pythonw.exe"
+STARTUP_LINK := A_Startup "\LookUp Popup.lnk"
+; 免安装版自带 python\ 文件夹；从源码安装的用 setup.ps1 建的 .venv
+PYTHONW := FileExist(A_ScriptDir "\python\pythonw.exe")
+    ? A_ScriptDir "\python\pythonw.exe"
+    : A_ScriptDir "\.venv\Scripts\pythonw.exe"
 
 if !FileExist(PYTHONW) {
     MsgBox "没有找到 Python 运行环境，请先在本文件夹运行 setup.ps1。", "查词", "Icon!"
@@ -23,10 +27,13 @@ SetLookupKey(IniRead(CONFIG, "LookUp", "Key", DEFAULT_KEY))
 
 A_TrayMenu.Delete()
 A_TrayMenu.Add("更改查词按键…", (*) => ChangeKey())
+A_TrayMenu.Add("开机自动启动", (*) => ToggleStartup())
 A_TrayMenu.Add("打开所在文件夹", (*) => Run(A_ScriptDir))
 A_TrayMenu.Add()
 A_TrayMenu.Add("退出", (*) => ExitApp())
 A_TrayMenu.Default := "更改查词按键…"   ; 双击托盘图标也能打开
+if FileExist(STARTUP_LINK)
+    A_TrayMenu.Check("开机自动启动")
 
 if (A_Args.Length && A_Args[1] = "/setkey")
     ChangeKey()
@@ -184,6 +191,18 @@ ChangeKey() {
         SetLookupKey(lookupKey)                  ; 取消：恢复原来的按键
     }
     busy := false
+}
+
+; 在"启动"文件夹里放（或删掉）一个指向本脚本的快捷方式。
+; A_AhkPath 是正在运行的 AutoHotkey：免安装版里就是 LookUp.exe
+ToggleStartup() {
+    if FileExist(STARTUP_LINK) {
+        FileDelete STARTUP_LINK
+        A_TrayMenu.Uncheck("开机自动启动")
+    } else {
+        FileCreateShortcut A_AhkPath, STARTUP_LINK, A_ScriptDir, '"' A_ScriptFullPath '"', "LookUp Popup 查词"
+        A_TrayMenu.Check("开机自动启动")
+    }
 }
 
 ; ---------------------------------------------------------------- 查词服务

@@ -1,0 +1,38 @@
+Third-party components and data
+===============================
+
+LookUp Popup's own code (LookUp.ahk, lookup.pyw, ui/) is released under the MIT License (see LICENSE).
+This package also contains the following, each under its own license.
+
+PROGRAMS
+--------
+LookUp.exe
+  AutoHotkey v2 (AutoHotkey64.exe, renamed), GNU General Public License v2.0.
+  License: licenses/AutoHotkey-GPL-2.0.txt
+  Source code: https://github.com/AutoHotkey/AutoHotkey
+
+python/
+  Python embeddable distribution, Python Software Foundation License.
+  License: licenses/Python-PSF.txt — https://www.python.org/
+
+python/Lib/site-packages/
+  pywebview (BSD-3-Clause), pythonnet (MIT), clr_loader (MIT), cffi (MIT), pycparser (BSD-3-Clause),
+  bottle (MIT), proxy_tools (MIT), typing_extensions (PSF), uiautomation (Apache-2.0), comtypes (MIT).
+  Each package's license file is in its *.dist-info folder.
+
+DICTIONARY DATA (data/dict.db)
+------------------------------
+data/dict.db is a database compiled from the sources below. Because it includes material from
+Wiktionary, the database is distributed under the Creative Commons Attribution-ShareAlike 4.0
+International License (CC BY-SA 4.0): https://creativecommons.org/licenses/by-sa/4.0/
+It is rebuilt from the original sources by build_db.py in the project repository.
+
+  English definitions, pronunciations, etymologies:
+    Wiktionary (https://en.wiktionary.org/), by Wiktionary contributors, CC BY-SA 4.0 / GFDL,
+    extracted with wiktextract via kaikki.org (https://kaikki.org/dictionary/English/).
+
+  Thesaurus and fallback English definitions:
+    Open English WordNet 2024 (https://en-word.net/), CC BY 4.0.
+
+  English–Chinese entries:
+    ECDICT (https://github.com/skywind3000/ECDICT), by skywind3000, MIT License.

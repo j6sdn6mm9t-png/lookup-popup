@@ -1,0 +1,26 @@
+LookUp Popup · Windows 上的 macOS 式查词
+==========================================
+
+【开始使用】
+1. 把整个 LookUp-Popup 文件夹放到一个固定的位置（例如 文档 或 D 盘），不要放在"下载"里随手删掉。
+2. 双击 LookUp.exe。右下角托盘出现绿色 H 图标就表示已经在运行。
+3. 把鼠标停在任意英文单词上，按一下鼠标的「前进侧键」（拇指位置靠前的那个），就会弹出释义。
+   点面板外面或按 Esc 关闭。
+
+【常用设置】右键托盘里的绿色 H 图标：
+  · 更改查词按键…   按下想用的键即可，例如鼠标后退侧键、中键，或 Ctrl+Alt+D
+  · 开机自动启动     打勾后每次开机自动运行
+  · 退出
+
+【常见问题】
+  · 双击后提示"Windows 已保护你的电脑"：点「更多信息」→「仍要运行」。
+    LookUp.exe 就是开源软件 AutoHotkey（https://www.autohotkey.com），只是改了名字。
+  · 杀毒软件拦截：同上，AutoHotkey 偶尔会被误报，可以把本文件夹加入信任。
+  · 按键没反应：确认托盘里有绿色 H 图标；鼠标没有侧键的话，在「更改查词按键」里换成键盘组合键。
+  · 需要 Windows 10/11。Windows 11 自带运行所需的 WebView2；Windows 10 如果弹窗不出现，
+    请安装 Microsoft Edge WebView2 运行时：https://go.microsoft.com/fwlink/p/?LinkId=2124703
+
+【卸载】右键托盘图标 → 退出，然后删除整个文件夹即可（如果开了开机自启，先在菜单里取消勾选）。
+
+项目主页：https://github.com/j6sdn6mm9t-png/lookup-popup
+各组件和词典数据的许可见 THIRD-PARTY-NOTICES.txt。

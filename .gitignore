@@ -4,3 +4,4 @@ download/
 lookup.log*
 config.ini
 __pycache__/
+dist/
