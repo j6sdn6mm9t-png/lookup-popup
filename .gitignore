@@ -1,0 +1,5 @@
+.venv/
+data/
+download/
+lookup.log*
+__pycache__/

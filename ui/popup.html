@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LookUp</title>
+<style>
+  :root {
+    /* 界面文字用 SF Pro（已装在系统里），没有时退回 Segoe UI */
+    --font-text: "SF Pro Text", "SF Pro", "Segoe UI", "PingFang SC", "Noto Sans SC", "Microsoft YaHei UI", sans-serif;
+    --font-display: "SF Pro Display", "SF Pro", "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+    /* 词条正文：macOS 词典用 Palatino，Windows 自带同源的 Palatino Linotype */
+    --font-serif: "Palatino Linotype", "Palatino", "Book Antiqua", Georgia, "Songti SC", "Noto Serif SC", serif;
+    /* 中文配衬线英文用宋体：macOS 英汉词典用的是宋体（Songti），Windows 11 自带同类的思源宋体 */
+    --font-zh: "Palatino Linotype", "Songti SC", "Noto Serif SC", "Source Han Serif SC", "SimSun", serif;
+
+    --margin: 24px;        /* 与 lookup.pyw 的 MARGIN 一致 */
+    --radius: 18px;
+
+    --text: #1d1d1f;
+    --secondary: #6e6e73;
+    --sec-title: #5a5a5f;
+    --bars: #b0b0b5;
+    --rule: rgba(0, 0, 0, .1);
+    --accent: #0a64d8;
+    /* 玻璃：着色、上亮下暗的渐变、高光边 */
+    --tint-top: rgba(255, 255, 255, .70);
+    --tint-bottom: rgba(248, 248, 250, .80);
+    --rim: rgba(255, 255, 255, .7);
+    --rim-soft: rgba(255, 255, 255, .28);
+    --shadow: 0 10px 28px rgba(0, 0, 0, .16), 0 1px 4px rgba(0, 0, 0, .08);
+    --glass-filter: saturate(1.9) brightness(1.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --text: #f5f5f7;
+      --secondary: #aeaeb2;
+      --sec-title: #c7c7cc;
+      --bars: #6e6e73;
+      --rule: rgba(255, 255, 255, .12);
+      --accent: #5aa2ff;
+      --tint-top: rgba(58, 58, 62, .58);
+      --tint-bottom: rgba(30, 30, 32, .7);
+      --rim: rgba(255, 255, 255, .22);
+      --rim-soft: rgba(255, 255, 255, .08);
+      --shadow: 0 10px 28px rgba(0, 0, 0, .45), 0 1px 4px rgba(0, 0, 0, .3);
+      --glass-filter: saturate(1.6) brightness(.9);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: transparent;
+    color: var(--text);
+    font: 14px/1.5 var(--font-text);
+    font-optical-sizing: auto;
+    -webkit-font-smoothing: antialiased;
+    cursor: default;
+  }
+
+  /* ---------- 图层 ---------- */
+  /* 背后屏幕的原样截图：第一帧只看到它，窗口看起来是透明的 */
+  .shot {
+    position: fixed;
+    background-image: var(--shot);
+    background-size: var(--cap-w) var(--cap-h);
+    background-repeat: no-repeat;
+  }
+  #raw { inset: 0; background-position: calc(-1 * var(--x)) calc(-1 * var(--y)); }
+
+  #shadow, #glass {
+    position: fixed; inset: var(--margin);
+    border-radius: var(--radius);
+  }
+  #shadow { box-shadow: var(--shadow); opacity: 0; }
+  #glass { overflow: hidden; opacity: 0; transform-origin: var(--ax) var(--ay); }
+
+  /* 模糊后的背景：截图在 prepare() 里画到这个 canvas 上并预先模糊好（见 frost()），这里只定位和调色。
+     #glass 的原点在窗口的 (margin, margin)，截图原点在窗口的 (-x, -y) */
+  #blur {
+    position: absolute;
+    left: calc(-1 * var(--x) - var(--margin));
+    top: calc(-1 * var(--y) - var(--margin));
+    width: var(--cap-w); height: var(--cap-h);
+    filter: var(--glass-filter);
+  }
+  #tint { position: absolute; inset: 0; background: linear-gradient(180deg, var(--tint-top), var(--tint-bottom)); }
+  /* 展开时扫过的一道斜向高光 */
+  #sheen {
+    position: absolute; inset: -40% -60%;
+    background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, .42) 48%, rgba(255, 255, 255, .1) 54%, transparent 62%);
+    opacity: 0; pointer-events: none;
+  }
+  /* 高光边：一圈细亮线，顶部更亮 */
+  #rim {
+    position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+    box-shadow:
+      inset 0 0 0 1px var(--rim-soft),
+      inset 0 1.5px 0 var(--rim),
+      inset 0 -1px 0 rgba(255, 255, 255, .12);
+  }
+
+  /* ---------- 内容 ---------- */
+  /* 版式照 macOS 查词面板：分区标题用无衬线灰色大字 + 细线，词条正文用衬线字体 */
+  #panel {
+    position: absolute; inset: 0;
+    overflow-y: auto;
+    padding: 10px 18px 12px;
+    user-select: text;
+    font: 17px/1.36 var(--font-serif);
+  }
+  #panel::-webkit-scrollbar { width: 9px; }
+  #panel::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 5px; border: 3px solid transparent; background-clip: content-box; }
+  /* flow-root：让子元素的外边距算进 #content 的高度，否则窗口会矮几像素、出现滚动条 */
+  #content { transform-origin: var(--ax) 0; display: flow-root; }
+
+  .sec + .sec { margin-top: 6px; }
+  .sec-title {
+    display: flex; align-items: center; gap: 10px;
+    font: 400 21px/1.25 var(--font-display); letter-spacing: -.01em;
+    color: var(--sec-title);
+  }
+  .sec-title::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+  .body { padding-left: 22px; }
+
+  .hw-line { margin: 3px 0 1px; }
+  .hw { font: 700 20px/1.3 var(--font-serif); }
+  .ipa { color: var(--secondary); font: 18px var(--font-serif); margin-left: 10px; white-space: nowrap; }
+  .ipa i { font-style: normal; color: var(--bars); }
+  .pos-inline { color: var(--secondary); font: 16px var(--font-text); margin-left: 10px; }
+
+  /* 义项：灰色序号 + 正文 */
+  .sense { display: grid; grid-template-columns: 22px 1fr; margin: 1px 0 3px; }
+  .n { color: var(--secondary); font: 600 15px/1.55 var(--font-text); text-align: left; }
+  .n.circled { font-weight: 400; }
+  .tag { color: var(--secondary); font: 14px var(--font-text); margin-right: 5px; }
+  .ex { font-style: italic; color: var(--secondary); }
+  .syn-first { font-weight: 700; }
+  .pos-head { color: var(--secondary); font: 16px/1.3 var(--font-text); margin: 4px 0 1px; }
+  .pos-head b { font-weight: 600; margin-right: 6px; }
+  .zh-text { font: 500 16.5px var(--font-zh); }
+
+  .more {
+    border: 0; background: none; padding: 0; margin: 0;
+    color: var(--accent); font: 600 14px var(--font-text); cursor: pointer;
+  }
+  .more:hover { text-decoration: underline; }
+
+  .lemma { color: var(--secondary); font: 13.5px var(--font-text); margin: 0 0 6px; }
+  .lemma a { color: var(--accent); text-decoration: none; cursor: pointer; font-weight: 600; }
+  .lemma a:hover { text-decoration: underline; }
+  .origin { color: var(--secondary); font-size: 14.5px; margin-top: 8px; }
+  .origin b { font: 600 13px var(--font-text); margin-right: 6px; }
+  .empty { color: var(--secondary); font: 15px var(--font-text); text-align: center; padding: 18px 0 10px; }
+</style>
+</head>
+<body>
+<!-- 字体预热：第一次用到某个系统字体时 Chromium 会延迟加载，第一次查词量高度就不准，
+     所以页面一载入就把用到的字体、字重、斜体都先渲染一遍 -->
+<div aria-hidden="true" style="position: absolute; left: -9999px; top: 0; visibility: hidden">
+  <span class="sec-title">English 英语</span>
+  <span class="hw">En·glish</span> <span class="ipa">ˈɪŋ.ɡlɪʃ</span> <span class="pos-inline">noun</span>
+  <span style="font: 16px var(--font-serif)">text <i>italic</i> <b>bold</b> 中文</span>
+  <span class="n">1 ①</span> <span class="tag">tag</span> <span class="zh-text">中文释义</span> <span class="more">more</span>
+</div>
+<div id="raw" class="shot"></div>
+<div id="shadow"></div>
+<div id="glass">
+  <canvas id="blur"></canvas>
+  <div id="tint"></div>
+  <div id="sheen"></div>
+  <div id="panel"><div id="content"></div></div>
+  <div id="rim"></div>
+</div>
+
+<script>
+const root = document.documentElement.style;
+const $ = id => document.getElementById(id);
+const panel = $('panel'), content = $('content');
+let current = null;
+let shotUrl = null;
+
+// ---------- 动画 ----------
+
+// 由阻尼弹簧方程采样生成 CSS linear() 缓动，得到真实的回弹手感
+function spring({ stiffness = 170, damping = 19, mass = 1 } = {}, samples = 60) {
+  const w0 = Math.sqrt(stiffness / mass), zeta = damping / (2 * Math.sqrt(stiffness * mass));
+  const wd = w0 * Math.sqrt(1 - zeta * zeta);
+  const x = t => 1 - Math.exp(-zeta * w0 * t) * (Math.cos(wd * t) + (zeta * w0 / wd) * Math.sin(wd * t));
+  let end = 0;                       // 找到基本静止的时刻作为动画时长
+  for (let t = 0; t < 3; t += 0.005) if (Math.abs(x(t) - 1) > 0.002) end = t;
+  const pts = [];
+  for (let i = 0; i <= samples; i++) pts.push(x(end * i / samples).toFixed(4));
+  return { easing: `linear(${pts.join(', ')})`, duration: Math.round(end * 1000) };
+}
+const GROW = spring({ stiffness: 210, damping: 21 });   // 轻微回弹
+const SETTLE = spring({ stiffness: 260, damping: 30 });  // 几乎不回弹
+
+let running = [];
+function play(el, frames, opts) {
+  const a = el.animate(frames, { fill: 'forwards', ...opts });
+  running.push(a);
+  return a;
+}
+function stopAll() { running.forEach(a => a.cancel()); running = []; }
+
+const BLUR = 28;   // 玻璃模糊半径（CSS 像素）
+
+// 把截图模糊一次。先用边缘像素向外扩一圈再模糊，结果每个像素都不透明；
+// 直接用 CSS blur() 的话，边缘会混进透明，面板靠边处会露出底下清晰的截图
+function frost(img, scale) {
+  const sigma = BLUR * scale, pad = Math.ceil(sigma * 3);
+  const w = img.width, h = img.height;
+  const src = new OffscreenCanvas(w + 2 * pad, h + 2 * pad);
+  const s = src.getContext('2d');
+  s.drawImage(img, pad, pad);
+  s.drawImage(img, 0, 0, w, 1, pad, 0, w, pad);                   // 上
+  s.drawImage(img, 0, h - 1, w, 1, pad, pad + h, w, pad);         // 下
+  s.drawImage(src, pad, 0, 1, h + 2 * pad, 0, 0, pad, h + 2 * pad);               // 左（含角）
+  s.drawImage(src, pad + w - 1, 0, 1, h + 2 * pad, pad + w, 0, pad, h + 2 * pad); // 右（含角）
+  const out = $('blur');
+  out.width = w;
+  out.height = h;
+  const o = out.getContext('2d');
+  o.filter = `blur(${sigma}px)`;
+  o.drawImage(src, -pad, -pad);
+}
+
+// Python 调用：载入背景截图、渲染内容，返回内容高度（CSS 像素）
+async function prepare(entry, url, capW, capH) {
+  stopAll();
+  const blob = await (await fetch(url)).blob();
+  const next = URL.createObjectURL(blob);
+  const img = new Image();
+  img.src = next;
+  await img.decode();
+  frost(img, img.width / capW);
+  if (shotUrl) URL.revokeObjectURL(shotUrl);
+  shotUrl = next;
+  root.setProperty('--shot', `url("${next}")`);
+  root.setProperty('--cap-w', capW + 'px');
+  root.setProperty('--cap-h', capH + 'px');
+  await document.fonts.ready;          // 截断成 3 行要量文字高度，字体必须先就位
+  // 排版和量高度时先藏起滚动条（reveal 时恢复）：窗口还是上次的尺寸，
+  // 如果此时有滚动条，文字区变窄、换行变多，量出来会偏高
+  panel.style.overflowY = 'hidden';
+  expanded = new Set();
+  draw(entry);
+  panel.scrollTop = 0;
+  return contentHeight();
+}
+
+const contentHeight = () => content.offsetHeight + 26;   // 加上 #panel 的上下内边距
+
+// Python 调用：等新的一帧真正画出来（此时窗口还是隐身的，画面等于背后的截图）
+function painted() {
+  return Promise.race([
+    new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))),
+    new Promise(r => setTimeout(r, 120)),
+  ]).then(() => true);
+}
+
+// Python 调用：窗口相对截图的位置，以及光标（单词）在窗口里的位置
+function place(x, y, ax, ay) {
+  root.setProperty('--x', x + 'px');
+  root.setProperty('--y', y + 'px');
+  const m = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--margin'));
+  root.setProperty('--ax', (ax - m) + 'px');
+  root.setProperty('--ay', (ay - m) + 'px');
+}
+
+// 从光标处的单词"长"出玻璃面板
+function reveal() {
+  stopAll();
+  panel.style.overflowY = '';
+  const g = $('glass').getBoundingClientRect();
+  const m = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--margin'));
+  const ax = Math.min(Math.max(parseFloat(root.getPropertyValue('--ax')), 0), g.width);
+  const ay = Math.min(Math.max(parseFloat(root.getPropertyValue('--ay')), -m), g.height);
+  // 起点：单词位置的一个小胶囊
+  const pill = `inset(${Math.max(ay - 12, 0)}px ${Math.max(g.width - ax - 34, 0)}px ${Math.max(g.height - ay - 12, 0)}px ${Math.max(ax - 34, 0)}px round 14px)`;
+  const full = `inset(0px 0px 0px 0px round ${getComputedStyle($('glass')).borderRadius})`;
+
+  play($('glass'), [
+    { clipPath: pill, opacity: 0, transform: 'scale(.97)' },
+    { opacity: 1, offset: .18 },
+    { clipPath: full, opacity: 1, transform: 'scale(1)' },
+  ], GROW);
+  play($('shadow'), [
+    { opacity: 0, transform: 'scale(.94)' },
+    { opacity: 1, transform: 'scale(1)' },
+  ], { ...SETTLE, delay: 60 });
+  play(content, [
+    { opacity: 0, transform: 'translateY(6px) scale(.985)', filter: 'blur(3px)' },
+    { opacity: 1, transform: 'none', filter: 'none' },
+  ], { ...SETTLE, delay: 70 });
+  play($('sheen'), [
+    { opacity: 0, transform: 'translateX(-35%)' },
+    { opacity: 1, offset: .3 },
+    { opacity: 0, transform: 'translateX(35%)' },
+  ], { duration: 900, delay: 40, easing: 'cubic-bezier(.3, .6, .3, 1)' });
+}
+
+// 关闭：玻璃溶解回背景
+function conceal() {
+  const opts = { duration: 130, easing: 'cubic-bezier(.4, 0, 1, 1)' };
+  play($('glass'), [{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.985)' }], opts);
+  play($('shadow'), [{ opacity: 1 }, { opacity: 0 }], opts);
+}
+
+// ---------- 内容 ----------
+
+// 和 macOS 一样分三个区：English / English Thesaurus / Simplified Chinese – English。
+// 每个区默认只预览第一条（最多 3 行，行尾接 more），点 more 展开该区全部内容。
+
+const PREVIEW_LINES = 3;
+const POS_ZH = { 'n.': 'noun', 'v.': 'verb', 'vt.': 'verb', 'vi.': 'verb', 'a.': 'adjective', 'adj.': 'adjective',
+                 'ad.': 'adverb', 'adv.': 'adverb', 'prep.': 'preposition', 'conj.': 'conjunction', 'pron.': 'pronoun',
+                 'int.': 'exclamation', 'interj.': 'exclamation', 'num.': 'number', 'art.': 'article', 'abbr.': 'abbreviation' };
+const CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+const MORE = sec => `<button class="more" data-sec="${sec}">more</button>`;
+
+let expanded = new Set();   // 已展开的分区
+
+function hwLine(word, ipa, pos) {
+  return `<div class="hw-line"><span class="hw">${esc(word)}</span>`
+    + (ipa ? `<span class="ipa"><i>|</i> ${esc(ipa)} <i>|</i></span>` : '')
+    + (pos ? `<span class="pos-inline">${esc(pos)}</span>` : '') + `</div>`;
+}
+
+function sense(n, inner, circled = false) {
+  return `<div class="sense"><span class="n${circled ? ' circled' : ''}">${n}</span><span class="t">${inner}</span></div>`;
+}
+
+const defHtml = s => (s.l || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')
+  + esc(s.d) + (s.e ? ` <span class="ex">${esc(s.e)}</span>` : '');
+const synHtml = s => (s.e ? `<span class="ex">${esc(s.e)}</span> ` : '')
+  + s.s.map((w, i) => i === 0 ? `<span class="syn-first">${esc(w)}</span>` : esc(w)).join(', ');
+
+function englishSection(e) {
+  const groups = e.en;
+  const open = expanded.has('en');
+  let html = hwLine(e.head, e.ipa, open ? '' : groups[0].pos);
+  if (!open) {
+    html += sense(1, defHtml({ d: groups[0].senses[0].d }));   // 预览只要释义本身，不要标签和例句
+  } else {
+    for (const g of groups) {
+      html += `<div class="pos-head">${esc(g.pos)}</div>`;
+      g.senses.forEach((s, i) => html += sense(g.senses.length > 1 ? i + 1 : '', defHtml(s)));
+    }
+    if (e.origin) html += `<div class="origin"><b>ORIGIN</b>${esc(e.origin)}</div>`;
+  }
+  const hasMore = groups.length > 1 || groups[0].senses.length > 1 || groups[0].senses[0].e || e.origin;
+  return { title: 'English', html, clamp: !open, hasMore };
+}
+
+function thesaurusSection(e) {
+  const groups = e.thesaurus;
+  const open = expanded.has('th');
+  const word = e.head.replace(/·/g, '');
+  let html;
+  if (!open) {
+    html = hwLine(word, '', groups[0].pos) + sense(1, synHtml(groups[0].senses[0]));
+  } else {
+    html = hwLine(word, '', '');
+    for (const g of groups) {
+      html += `<div class="pos-head">${esc(g.pos)}</div>`;
+      g.senses.forEach((s, i) => html += sense(i + 1, synHtml(s)));
+    }
+  }
+  const hasMore = groups.length > 1 || groups[0].senses.length > 1;
+  return { title: 'English Thesaurus', html, clamp: !open, hasMore };
+}
+
+// ECDICT 的中文释义一行一个词性，如 "vi. 跑, 奔跑"；按词性编为 A. B. …
+function chineseSection(e) {
+  const open = expanded.has('zh');
+  const blocks = [];
+  for (const line of e.zh) {
+    const pos = line.match(/^([a-z]{1,6}\.)\s*(.*)$/);
+    const field = line.match(/^\[([^\]]{1,4})\]\s*(.*)$/);
+    const text = esc((pos ? pos[2] : field ? field[2] : line).replace(/,\s*/g, '；'));
+    const label = pos ? (POS_ZH[pos[1]] || pos[1]) : field ? field[1] : '';
+    const prev = blocks[blocks.length - 1];
+    if (prev && prev.label === label) prev.items.push(text);   // vt. 和 vi. 合并到同一个 verb 下
+    else blocks.push({ label, items: [text] });
+  }
+  let html = hwLine(e.zhWord || e.word, e.phonetic, '');
+  const shown = open ? blocks : blocks.slice(0, 1);
+  shown.forEach((b, bi) => {
+    if (b.label) html += `<div class="pos-head">${blocks.length > 1 ? `<b>${String.fromCharCode(65 + bi)}.</b>` : ''}${esc(b.label)}</div>`;
+    b.items.forEach((t, i) => html += sense(CIRCLED[i] || i + 1, `<span class="zh-text">${t}</span>`, true));
+  });
+  const hasMore = blocks.length > 1;
+  return { title: 'Simplified Chinese – English', html, clamp: !open, hasMore };
+}
+
+// 把预览截到 PREVIEW_LINES 行，行尾接 more（和 macOS 一样不加省略号）
+function clampPreview(el, sec, hasMore) {
+  const t = el.querySelector('.sense:last-of-type .t');
+  if (!t) return;
+  const lh = parseFloat(getComputedStyle(t).lineHeight);
+  const max = lh * PREVIEW_LINES + 2;
+  const fits = () => t.offsetHeight <= max;
+  if (fits() && !hasMore) return;
+  t.insertAdjacentHTML('beforeend', ' ' + MORE(sec));
+  if (fits()) return;
+  // 按"词"二分查找最多能留多少
+  const walker = document.createTreeWalker(t, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentElement.closest('.more') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  const tokens = nodes.map(n => n.nodeValue.split(/(\s+)/));
+  const total = tokens.reduce((a, b) => a + b.length, 0);
+  const keep = k => {
+    let left = k;
+    nodes.forEach((n, i) => {
+      const take = Math.max(0, Math.min(tokens[i].length, left));
+      n.nodeValue = tokens[i].slice(0, take).join('');
+      left -= take;
+    });
+  };
+  let lo = 0, hi = total;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    keep(mid);
+    if (fits()) lo = mid; else hi = mid - 1;
+  }
+  keep(lo);
+  const last = nodes.filter(n => n.nodeValue.trim()).pop();
+  if (last) last.nodeValue = last.nodeValue.replace(/[\s,;:]+$/, '') + ' ';
+}
+
+function draw(entry) {
+  current = entry;
+  if (entry.notFound) {
+    content.innerHTML = `<div class="empty">No entries found for “${esc(entry.query || entry.word)}”</div>`;
+    return;
+  }
+  const sections = [];
+  if (entry.en && entry.en.length) sections.push(['en', englishSection(entry)]);
+  if (entry.thesaurus && entry.thesaurus.length) sections.push(['th', thesaurusSection(entry)]);
+  if (entry.zh && entry.zh.length) sections.push(['zh', chineseSection(entry)]);
+
+  let html = '';
+  if (entry.lemma) {
+    html += `<div class="lemma">${esc(entry.word)}：<a data-word="${esc(entry.lemma.word)}">${esc(entry.lemma.word)}</a> 的${esc(entry.lemma.kind)}</div>`;
+  }
+  html += sections.map(([key, s]) =>
+    `<div class="sec" data-key="${key}"><div class="sec-title">${esc(s.title)}</div><div class="body">${s.html}</div></div>`).join('');
+  content.innerHTML = html;
+  for (const [key, s] of sections) {
+    if (s.clamp) clampPreview(content.querySelector(`.sec[data-key="${key}"] .body`), key, s.hasMore);
+  }
+}
+
+// 重新排版并按新内容调整窗口高度
+function redraw(entry, keepScroll) {
+  const top = panel.scrollTop;
+  panel.style.overflowY = 'hidden';
+  draw(entry);
+  const h = contentHeight();
+  panel.style.overflowY = '';
+  panel.scrollTop = keepScroll ? top : 0;
+  window.pywebview && window.pywebview.api.fit(h);
+}
+
+content.addEventListener('click', async e => {
+  const t = e.target.closest('button, a');
+  if (!t || !current) return;
+  if (t.classList.contains('more')) {
+    expanded.add(t.dataset.sec);
+    redraw(current, true);
+  } else if (t.dataset.word) {
+    const entry = await window.pywebview.api.open(t.dataset.word);
+    if (entry) { expanded = new Set(); redraw(entry, false); }
+  }
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') window.pywebview.api.hide();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+# 运行
+pywebview>=6.2,<7
+uiautomation>=2.0.29,<3
+# 构建词典数据（build_db.py）
+wn>=1.1,<2
