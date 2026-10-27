@@ -2,4 +2,5 @@
 data/
 download/
 lookup.log*
+config.ini
 __pycache__/

@@ -83,4 +83,5 @@ if ($Startup) {
 
 Step '启动'
 Start-Process $ahk "`"$PSScriptRoot\lookup.ahk`""
-Write-Host '完成。把鼠标停在英文单词上，按鼠标前进侧键即可查词（在 lookup.ahk 开头可以改按键）。' -ForegroundColor Green
+Write-Host '完成。把鼠标停在英文单词上，按鼠标前进侧键即可查词。' -ForegroundColor Green
+Write-Host '想换按键：右键托盘里的 AutoHotkey 图标 → 更改查词按键…'
