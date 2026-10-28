@@ -157,6 +157,27 @@ class Dictionary:
 
 # ---------------------------------------------------------------- 取词
 
+def _grow_to_word(rng):
+    """补齐单词边界。网页把一个词拆进多个标签时（如 <span>P</span>rospectus），
+    Chrome 给出的单词会少掉开头或结尾的字母（"rospectus"、"Summar"），
+    所以逐个字符向两边看，相邻的还是字母就并进来，直到碰到空格或标点。"""
+    for endpoint, step in ((auto.TextPatternRangeEndpoint.Start, -1),
+                           (auto.TextPatternRangeEndpoint.End, 1)):
+        for _ in range(30):
+            text = rng.GetText(100)
+            edge = text[:1] if step < 0 else text[-1:]
+            if not edge.isalpha():              # 这一侧已经是空格或标点，说明边界本来就对
+                break
+            probe = rng.Clone()
+            if probe.MoveEndpointByUnit(endpoint, auto.TextUnit.Character, step, waitTime=0) == 0:
+                break                           # 到了文档开头或结尾
+            grown = probe.GetText(100)
+            added = grown[:1] if step < 0 else grown[-1:]
+            if len(grown) != len(text) + 1 or not added.isalpha():
+                break
+            rng.MoveEndpointByUnit(endpoint, auto.TextUnit.Character, step, waitTime=0)
+
+
 def _word_at_uia(x, y, result):
     try:
         with auto.UIAutomationInitializerInThread():
@@ -170,6 +191,7 @@ def _word_at_uia(x, y, result):
                     if not rng:
                         return
                     rng.ExpandToEnclosingUnit(auto.TextUnit.Word, waitTime=0)
+                    _grow_to_word(rng)
                     text = rng.GetText(80)
                     rects = rng.GetBoundingRectangles()
                     # 光标没落在这个词上（比如指着空白处）就算取词失败
@@ -188,8 +210,9 @@ def _word_at_uia(x, y, result):
         log.exception("uia failed")
 
 
-def word_at(x, y, timeout=0.8):
-    """用 UI Automation 读光标下的单词；有的程序会卡住，所以放到线程里限时。"""
+def word_at(x, y, timeout=1.5):
+    """用 UI Automation 读光标下的单词；有的程序会卡住，所以放到线程里限时。
+    Chrome 在页面第一次被读取时才建无障碍信息，可能要将近一秒，时限不能太短。"""
     result = []
     t = threading.Thread(target=_word_at_uia, args=(x, y, result), daemon=True)
     t.start()
