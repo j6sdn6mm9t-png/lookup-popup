@@ -178,10 +178,152 @@ def _grow_to_word(rng):
             rng.MoveEndpointByUnit(endpoint, auto.TextUnit.Character, step, waitTime=0)
 
 
+_S, _E, _CH = auto.TextPatternRangeEndpoint.Start, auto.TextPatternRangeEndpoint.End, auto.TextUnit.Character
+
+
+def _char_rect(rng, i):
+    """文字块里第 i 个字符的屏幕矩形。"""
+    c = rng.Clone()
+    c.MoveEndpointByRange(_E, c, _S, waitTime=0)        # 折叠到开头
+    c.MoveEndpointByUnit(_E, _CH, i + 1, waitTime=0)
+    c.MoveEndpointByUnit(_S, _CH, i, waitTime=0)
+    rects = c.GetBoundingRectangles()
+    return rects[0] if rects else None
+
+
+def _char_index_at(rng, n, x, y):
+    """二分查找光标下是第几个字符（文字按从上到下、从左到右排列）。"""
+    lo, hi = 0, n - 1
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        r = _char_rect(rng, mid)
+        if r is None:
+            return None
+        if y < r.top or (r.top <= y <= r.bottom and x < r.left):
+            hi = mid - 1
+        elif y > r.bottom or x >= r.right:
+            lo = mid + 1
+        else:
+            return mid
+    return None
+
+
+def _text_chunk_at(ctrl, x, y):
+    """找到光标下的文字块（TextControl）。
+    Chrome 对一个位置的第一次点击测试常常只返回整个文档，第二次才返回具体的文字块，
+    所以第一次没找到就再测一次。"""
+    return _find_chunk(ctrl, x, y) or _find_chunk(auto.ControlFromPoint(x, y), x, y)
+
+
+def _find_chunk(ctrl, x, y):
+    """点击测试命中的是文字块就直接用；命中整个文档时，先用文档的 RangeFromPoint
+    落到光标处的字符（或代表嵌入块的 "￼"），再从它所在的元素往下找包含光标的文字块。"""
+    if ctrl is None:
+        return None
+    if ctrl.ControlTypeName == "TextControl" and ctrl.Name:
+        return ctrl
+    tp = ctrl.GetPattern(auto.PatternId.TextPattern)
+    if not tp:
+        return None
+    r = tp.RangeFromPoint(x, y)
+    if not r:
+        return None
+    r.ExpandToEnclosingUnit(auto.TextUnit.Character, waitTime=0)
+    roots = r.GetChildren() or []
+    enclosing = r.textRange.GetEnclosingElement()
+    if enclosing:
+        roots.append(auto.Control.CreateControlFromElement(enclosing))
+    for root in roots:
+        if root is None or auto.ControlsAreSame(root, ctrl):
+            continue                                    # 别把整个文档再遍历一遍
+        for c, _ in auto.WalkControl(root, includeTop=True, maxDepth=6):
+            b = c.BoundingRectangle
+            if c.ControlTypeName == "TextControl" and c.Name and b.left <= x < b.right and b.top <= y < b.bottom:
+                return c
+    return None
+
+
+def _chunk_range(tp, ctrl):
+    # uiautomation 的 RangeFromChild 封装有 bug，直接调底层接口
+    raw = tp.pattern.RangeFromChild(ctrl.Element)
+    return auto.TextRange(raw) if raw else None
+
+
+def _adjacent_letters(tp, ctrl, rng, text, side, depth=0):
+    """单词碰到文字块边缘时，取紧挨着的相邻块（同一行、左右相接）里接上的字母。"""
+    edge = _char_rect(rng, 0 if side < 0 else len(text) - 1)
+    if edge is None or depth > 2:
+        return ""
+    ymid = (edge.top + edge.bottom) // 2
+    px = edge.left - 3 if side < 0 else edge.right + 2
+    other = _text_chunk_at(auto.ControlFromPoint(px, ymid), px, ymid)
+    if other is None or auto.ControlsAreSame(other, ctrl):
+        return ""
+    orng = _chunk_range(tp, other)
+    otext = orng.GetText(-1) if orng else ""
+    if not otext:
+        return ""
+    oedge = _char_rect(orng, len(otext) - 1 if side < 0 else 0)
+    if oedge is None or not (oedge.top < ymid < oedge.bottom):
+        return ""
+    gap = edge.left - oedge.right if side < 0 else oedge.left - edge.right
+    if gap > 3:                                         # 中间有空隙，说明是两个词
+        return ""
+    if side < 0:
+        m = re.search(r"[A-Za-z]*$", otext).group(0)
+        more = _adjacent_letters(tp, other, orng, otext, side, depth + 1) if m == otext else ""
+        return more + m
+    m = re.match(r"[A-Za-z]*", otext).group(0)
+    more = _adjacent_letters(tp, other, orng, otext, side, depth + 1) if m == otext else ""
+    return m + more
+
+
+def _word_from_text_chunk(ctrl, x, y):
+    """直接读光标下文字块的内容和字符位置来定单词。
+    有些网页（如 SEC 的申报文件）把每行切成很多绝对定位的小块，单词正好被切开
+    （"P" | "rospectus Summar" | "y"）；Chrome 在这种页面上取词只给出 "￼"，
+    双击选词也只选到半个词。所以自己算光标在哪个字符上，碰到块边缘就去拼相邻块。"""
+    tp, anc = None, ctrl
+    for _ in range(30):
+        anc = anc.GetParentControl()
+        if anc is None:
+            return None
+        tp = anc.GetPattern(auto.PatternId.TextPattern)
+        if tp:
+            break
+    if not tp:
+        return None
+    rng = _chunk_range(tp, ctrl)
+    text = rng.GetText(-1) if rng else ""
+    if not text:
+        return None
+    i = _char_index_at(rng, len(text), x, y)
+    if i is None or not text[i].isalpha():
+        return None
+    s, e = i, i + 1
+    while s > 0 and text[s - 1].isalpha():
+        s -= 1
+    while e < len(text) and text[e].isalpha():
+        e += 1
+    word = text[s:e]
+    if s == 0:
+        word = _adjacent_letters(tp, ctrl, rng, text, -1) + word
+    if e == len(text):
+        word += _adjacent_letters(tp, ctrl, rng, text, 1)
+    return word
+
+
 def _word_at_uia(x, y, result):
     try:
         with auto.UIAutomationInitializerInThread():
             ctrl = auto.ControlFromPoint(x, y)
+            # 网页里的文字（Chrome/Edge）：直接按文字块和字符位置来定单词
+            chunk = _text_chunk_at(ctrl, x, y)
+            if chunk is not None:
+                word = _word_from_text_chunk(chunk, x, y)
+                if word and WORD_RE.fullmatch(word):
+                    result.append(word)
+                    return
             for _ in range(8):
                 if ctrl is None:
                     return
