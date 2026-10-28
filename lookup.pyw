@@ -458,6 +458,11 @@ def capture_bmp(x, y, w, h):
 
 
 DWMWA_NCRENDERING_POLICY, DWMWA_CLOAK, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWA_BORDER_COLOR = 2, 13, 33, 34
+GWL_EXSTYLE, WS_EX_TOOLWINDOW, WS_EX_APPWINDOW, WS_EX_NOACTIVATE = -20, 0x80, 0x40000, 0x08000000
+user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
 
 
 def dwm_set(hwnd, attr, value):
@@ -497,6 +502,11 @@ class Popup:
         dwm_set(self.hwnd, DWMWA_NCRENDERING_POLICY, 1)          # 关掉系统阴影
         dwm_set(self.hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, 1)    # 关掉系统圆角
         dwm_set(self.hwnd, DWMWA_BORDER_COLOR, 0xFFFFFFFE)       # 关掉系统描边
+        # 标成工具窗口：不在任务栏和 Alt+Tab 里出现（否则每次弹出任务栏都会多一个 Python 图标）；
+        # 同时设为点击不激活，点 more 时焦点留在原来的程序里
+        ex = user32.GetWindowLongPtrW(self.hwnd, GWL_EXSTYLE)
+        ex = (ex | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) & ~WS_EX_APPWINDOW
+        user32.SetWindowLongPtrW(self.hwnd, GWL_EXSTYLE, ex)
         log.info("popup ready hwnd=%s", self.hwnd)
 
     def js(self, code):
